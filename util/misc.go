@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	vault "github.com/bliiitz/go-eth2-wallet-store-vault"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 	e2types "github.com/wealdtech/go-eth2-types/v2"
@@ -33,8 +34,7 @@ import (
 
 // SetupStore sets up the account store.
 func SetupStore() error {
-	var store e2wtypes.Store
-	var err error
+
 	if viper.GetString("remote") != "" {
 		// We are using a remote account manager, so no local setup required.
 		return nil
@@ -43,13 +43,18 @@ func SetupStore() error {
 	// Set up our wallet store.
 	switch viper.GetString("store") {
 	case "s3":
+
 		if GetBaseDir() != "" {
 			return errors.New("basedir does not apply to the s3 store")
 		}
-		store, err = s3.New(s3.WithPassphrase([]byte(GetStorePassphrase())))
+		store, err := s3.New(s3.WithPassphrase([]byte(GetStorePassphrase())))
 		if err != nil {
 			return errors.Wrap(err, "failed to access Amazon S3 wallet store")
 		}
+		if err := e2wallet.UseStore(store); err != nil {
+			return errors.Wrap(err, "failed to use defined wallet store")
+		}
+		viper.Set("store", store)
 	case "filesystem":
 		opts := make([]filesystem.Option, 0)
 		if GetStorePassphrase() != "" {
@@ -58,14 +63,70 @@ func SetupStore() error {
 		if GetBaseDir() != "" {
 			opts = append(opts, filesystem.WithLocation(GetBaseDir()))
 		}
-		store = filesystem.New(opts...)
+		store := filesystem.New(opts...)
+		if err := e2wallet.UseStore(store); err != nil {
+			return errors.Wrap(err, "failed to use defined wallet store")
+		}
+		viper.Set("store", store)
+	case "vault":
+		opts := make([]vault.Option, 0)
+
+		if GetStorePassphrase() != "" {
+			opts = append(opts, vault.WithPassphrase([]byte(GetStorePassphrase())))
+		}
+
+		id := viper.GetString("id")
+		if len(id) > 0 {
+			opts = append(opts, vault.WithID([]byte(id)))
+		}
+
+		vault_addr := viper.GetString("vault_addr")
+		if len(vault_addr) > 0 {
+			opts = append(opts, vault.WithVaultAddr(vault_addr))
+		}
+
+		vault_auth := viper.GetString("vault_auth")
+		if len(vault_auth) > 0 {
+			opts = append(opts, vault.WithVaultAuth(vault_auth))
+		}
+
+		vault_token := viper.GetString("vault_token")
+		if len(vault_token) > 0 {
+			opts = append(opts, vault.WithVaultToken(vault_token))
+		}
+
+		vault_kubernetes_auth_role := viper.GetString("vault_kubernetes_auth_role")
+		if len(vault_kubernetes_auth_role) > 0 {
+			opts = append(opts, vault.WithVaultKubernetesAuthRole(vault_kubernetes_auth_role))
+		}
+
+		vault_kubernetes_auth_sa_token_path := viper.GetString("vault_kubernetes_auth_sa_token_path")
+		if len(vault_kubernetes_auth_sa_token_path) > 0 {
+			opts = append(opts, vault.WithVaultKubernetesAuthSATokenPath(vault_kubernetes_auth_sa_token_path))
+		}
+
+		vault_kubernetes_auth := viper.GetString("vault_kubernetes_auth")
+		if len(vault_kubernetes_auth) > 0 {
+			opts = append(opts, vault.WithVaultKubernetesAuth(vault_kubernetes_auth))
+		}
+
+		vault_secrets_mount_path := viper.GetString("vault_secrets_mount_path")
+		if len(vault_secrets_mount_path) > 0 {
+			opts = append(opts, vault.WithVaultSecretMountPath(vault_secrets_mount_path))
+		}
+
+		store, err := vault.New(opts...)
+		if err != nil {
+			return errors.Wrap(err, fmt.Sprintf("failed to access vault store"))
+		}
+
+		if err := e2wallet.UseStore(store); err != nil {
+			return errors.Wrap(err, "failed to use defined wallet store")
+		}
+		viper.Set("store", store)
 	default:
 		return fmt.Errorf("unsupported wallet store %s", viper.GetString("store"))
 	}
-	if err := e2wallet.UseStore(store); err != nil {
-		return errors.Wrap(err, "failed to use defined wallet store")
-	}
-	viper.Set("store", store)
 
 	return nil
 }
